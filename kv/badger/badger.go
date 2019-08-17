@@ -31,7 +31,7 @@ var (
 // DB holds some kv-specific state in addition to mixing in a badger.DB.
 type DB struct {
 	*badger.DB
-	seq *badger.Sequence
+	a *kv.Allocer
 }
 
 // DefaultOptions returns a recommended default Options value for a database
@@ -47,13 +47,9 @@ func Open(opt badger.Options) (*DB, error) {
 		return nil, err
 	}
 
-	seq, err := bdb.GetSequence(entitySequenceKey, 128)
-	if err != nil {
-		bdb.Close()
-		return nil, err
-	}
-
-	return &DB{bdb, seq}, nil
+	db := &DB{DB: bdb}
+	db.a = kv.NewAllocer(db, []byte{0})
+	return db, nil
 }
 
 func (db *DB) Dump(w io.Writer) {
@@ -82,8 +78,8 @@ func (db *DB) Close() error {
 	if db == nil {
 		return nil
 	}
-	if db.seq != nil {
-		db.seq.Release()
+	if db.a != nil {
+		db.a.Save()
 	}
 	return db.DB.Close()
 }
@@ -100,14 +96,7 @@ type txn struct {
 }
 
 func (s txn) Alloc() (kv.Entity, error) {
-	u64, err := s.db.seq.Next()
-	if u64 == 0 {
-		u64, err = s.db.seq.Next()
-		if u64 == 0 {
-			return 0, fmt.Errorf("Alloc returned zero twice in a row")
-		}
-	}
-	return kv.Entity(u64), err
+	return s.db.a.Alloc()
 }
 
 func (s txn) Set(key, value []byte) error { return s.tx.Set(key, value) }

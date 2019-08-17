@@ -42,6 +42,8 @@ import (
 	"encoding/json"
 	"log"
 	"sort"
+	"sync/atomic"
+	"time"
 )
 
 // DB represents the functions a database connection should implement to be
@@ -238,6 +240,56 @@ func (s Partitioned) EntitiesByComponentIndex(c, ix Component, cursor *IndexCurs
 	}
 	cursor.Offset = len(buf)
 	return
+}
+
+// Allocer provides a generic implementation of the Txn.Alloc function.
+//
+// A single Allocer must be shared by all Txn values derived from the same
+// database. If each Txn uses a unique Allocer, then they may produce duplicate
+// values, which would violate the Txn.Alloc contract.
+type Allocer struct {
+	db   DB
+	key  []byte
+	last uint64
+}
+
+// NewAllocer returns a new Allocer.
+//
+// There should be no more than one Allocer per key per DB at any time.
+func NewAllocer(db DB, key []byte) *Allocer {
+	a := &Allocer{db: db, key: key}
+	txn := db.NewTxn(false)
+	defer txn.Discard()
+	var last Entity
+	txn.Get(key, func(bs []byte) error {
+		if len(bs) > 0 {
+			return last.Decode(bs)
+		}
+		return nil
+	})
+	a.last = uint64(last)
+	now := uint64(time.Now().UnixNano())
+	if a.last < now {
+		a.last = now
+	}
+	return a
+}
+
+// Alloc uses an atomic counter to produce unique uint64 values.
+func (a Allocer) Alloc() (Entity, error) {
+	return Entity(atomic.AddUint64(&a.last, 1)), nil
+}
+
+// Save stores the last value returned by Allocer so that later calls to
+// NewAllocer for the same DB and key will not produce any values that
+// duplicate values returned by this one.
+func (a Allocer) Save() error {
+	txn := a.db.NewTxn(true)
+	defer txn.Discard()
+	if err := txn.Set(a.key, Entity(a.last).Encode()); err != nil {
+		return err
+	}
+	return txn.Commit()
 }
 
 // Encoder is an interface implemented by any type that is to be stored in the
