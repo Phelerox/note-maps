@@ -24,10 +24,6 @@ import (
 	"github.com/google/note-maps/kv"
 )
 
-var (
-	entitySequenceKey = []byte{0}
-)
-
 // DB holds some kv-specific state in addition to mixing in a badger.DB.
 type DB struct {
 	*badger.DB
@@ -48,7 +44,7 @@ func Open(opt badger.Options) (*DB, error) {
 	}
 
 	db := &DB{DB: bdb}
-	db.a = kv.NewAllocer(db, []byte{0})
+	db.a = kv.NewAllocer(db, []byte{1})
 	return db, nil
 }
 
@@ -142,7 +138,9 @@ type iterator struct {
 	prefix []byte
 }
 
-func (i iterator) Seek(key []byte) { i.Iterator.Seek(append(i.prefix, key...)) }
+func (i iterator) Seek(key []byte) {
+	i.Iterator.Seek(append(i.prefix, key...))
+}
 
 func (i iterator) Key() []byte { return i.Item().Key()[len(i.prefix):] }
 
